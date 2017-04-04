@@ -1,0 +1,153 @@
+DRIVER
+
+
+import java.io.IOException;
+import java.net.URI;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.filecache.DistributedCache;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.Job;
+
+
+public class drv {
+	
+  public static void main(String[] args) 
+                  throws IOException, ClassNotFoundException, InterruptedException {
+    
+	//Job Related Configurations
+	Configuration conf = new Configuration();
+	Job job = new Job(conf, "Map-side join");
+	job.setJarByClass(drv.class);
+    
+    //Since this is a map side join, we are not using the reducers here. So set the reducers to zero
+
+    
+    //set up the distributed cache
+    try
+    {
+    	DistributedCache.addCacheFile(new URI("/user/acadgild/m1"), job.getConfiguration());
+    }catch(Exception e){
+    	System.out.println(e);
+    }
+    
+    //set up the mapper
+    job.setMapperClass(mpr.class);
+    job.setReducerClass(rdcr.class);
+    //set up the output classes
+    job.setMapOutputKeyClass(Text.class);
+    job.setMapOutputValueClass(Text.class);
+    
+    
+    FileInputFormat.addInputPath(job, new Path(args[0]));
+    
+	//set the out path
+	Path outputPath = new Path(args[1]);
+	FileOutputFormat.setOutputPath(job, outputPath);
+	outputPath.getFileSystem(conf).delete(outputPath, true);
+    
+	//execute the job
+	System.exit(job.waitForCompletion(true) ? 0 : 1);
+  }
+}
+
+
+
+MAPPER
+
+
+
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.hadoop.filecache.DistributedCache;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Mapper;
+
+
+	public class mpr extends Mapper<LongWritable,Text, Text, Text> {
+        
+		
+//The Map which is going to load the data from cache containing full forms of the abbreviations
+		private Map<String, String> abMap = new HashMap<String, String>();
+		
+		//Output key and value declarations
+		private Text outputKey = new Text();
+		private Text outputValue = new Text();
+		
+		//Set up method where the distributed cache data is loaded into hashmap from the distributed cache
+		protected void setup(Context context) throws java.io.IOException, InterruptedException{
+			//Fetch the files from the cache
+			Path[] files = DistributedCache.getLocalCacheFiles(context.getConfiguration());
+			
+			//Iterate through the cached files
+			for (Path p : files) {
+				if (p.getName().equals("m1")) {
+					BufferedReader reader = new BufferedReader(new FileReader(p.toString()));
+					String line = reader.readLine();
+					while(line != null) {
+						String[] tokens = line.split("\t");
+						abMap.put(tokens[0],line);
+						line = reader.readLine();				
+					}
+					reader.close();
+				}
+			}
+			if (abMap.isEmpty()) {
+				throw new IOException("Unable to load Abbrevation data.");
+			}
+		}
+
+		
+        //overwritten mapper method
+		protected void map(LongWritable key, Text value, Context context)
+            throws java.io.IOException, InterruptedException {
+        	
+        	String row = value.toString();
+        	String[] tokens1 = row.split("\t");
+        	String inab = tokens1[0];
+        	//Lookup for the values in the map populated by distributed cache above
+        	String line = abMap.get(inab);
+        	outputKey.set(line);
+        	outputValue.set(value);
+      	 	context.write(outputKey,outputValue);
+        	
+        }  
+}
+
+
+
+
+REDUCER
+
+import java.io.IOException;
+import org.apache.hadoop.io.IntWritable;
+
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Reducer;
+
+
+public class rdcr extends Reducer<Text,Text,Text,Text> {
+     
+     
+public void reduce(Text key , Iterable<Text> values, Context context) throws IOException,InterruptedException	
+	{   
+		
+		
+		for(Text x:values)
+		{
+		context.write(key,x);
+		}
+		
+	}
+}
